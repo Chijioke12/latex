@@ -1,0 +1,6 @@
+{
+  "name": "LaTeX to DocX",
+  "description": "A tool that uses AI to convert LaTeX code directly into a downloadable MS Word (DocX) file.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

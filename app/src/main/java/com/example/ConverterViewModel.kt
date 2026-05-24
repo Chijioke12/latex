@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 sealed class ConversionState {
     object Idle : ConversionState()
     object Converting : ConversionState()
+    data class PreviewReady(val blocks: List<DocxBlock>) : ConversionState()
     object AwaitingSaveLocation : ConversionState()
     data class Success(val message: String) : ConversionState()
     data class Error(val message: String) : ConversionState()
@@ -43,56 +44,15 @@ class ConverterViewModel : ViewModel() {
 
         viewModelScope.launch {
             try {
-                val prompt = """
-                    You are a LaTeX to MS Word structural converter. Convert the given LaTeX content into a structured JSON representation of the document flow. 
-                    ONLY output a raw JSON array matching this schema structure, do not include any markdown formatting like ```json.
-                    
-                    Schema:
-                    [
-                      { 
-                        "type": "p" | "h1" | "h2" | "h3" | "li" | "equation", 
-                        "level": 0, 
-                        "runs": [ 
-                           { "text": "string", "bold": false, "italic": false } 
-                        ] 
-                      }
-                    ]
-                    
-                    Rules:
-                    1. For math equations, translate them into formatted Unicode text (e.g. superscripts, fractions, greek letters) as best as you can so it reads well in plain text.
-                    2. For type 'li', level 0 is top level, 1 is nested.
-                    3. Do not include markdown codeblocks in your response, just the raw array.
-                    
-                    LaTeX Content:
-                    $text
-                """.trimIndent()
-
-                val request = GenerateContentRequest(
-                    contents = listOf(
-                        Content(parts = listOf(Part(text = prompt)))
-                    ),
-                    generationConfig = GenerationConfig(
-                        temperature = 0.2f,
-                        responseFormat = ResponseFormat(
-                            text = ResponseFormatText(mimeType = "application/json")
-                        )
-                    )
-                )
-
-                val apiKey = BuildConfig.GEMINI_API_KEY
-                
-                val jsonResponse = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val response = RetrofitClient.service.generateContent(apiKey, request)
-                    response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                val parsedBlocks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    LatexParser.parse(text)
                 }
                 
-                if (jsonResponse != null) {
-                    lastGeneratedJson = jsonResponse
-                    _state.value = ConversionState.AwaitingSaveLocation
-                } else {
-                    _state.value = ConversionState.Error("Received empty response from converter.")
-                }
+                val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
+                val jsonResponse = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(DocxBlock.serializer()), parsedBlocks)
+                lastGeneratedJson = jsonResponse
 
+                _state.value = ConversionState.PreviewReady(parsedBlocks)
             } catch (e: Exception) {
                 e.printStackTrace()
                 _state.value = ConversionState.Error("Failed to convert: ${e.message}")
@@ -120,6 +80,12 @@ class ConverterViewModel : ViewModel() {
                 e.printStackTrace()
                 _state.value = ConversionState.Error("Failed to save document: ${e.message}")
             }
+        }
+    }
+    
+    fun requestSave() {
+        if (lastGeneratedJson != null) {
+            _state.value = ConversionState.AwaitingSaveLocation
         }
     }
     
